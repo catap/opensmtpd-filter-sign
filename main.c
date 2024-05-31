@@ -46,7 +46,6 @@ struct dkim_message {
 	size_t body_whitelines;
 	int has_body;
 	struct dkim_signature signature;
-	int err;
 	EVP_MD_CTX *dctx;
 };
 
@@ -100,11 +99,8 @@ static int sephash = 0;
 
 void usage(void);
 void dkim_adddomain(char *);
-void dkim_err(struct dkim_message *, char *);
-void dkim_errx(struct dkim_message *, char *);
 void dkim_headers_set(char *);
 void dkim_dataline(struct osmtpd_ctx *, const char *);
-void dkim_commit(struct osmtpd_ctx *);
 void *dkim_message_new(struct osmtpd_ctx *);
 void dkim_message_free(struct osmtpd_ctx *, void *);
 void dkim_parse_header(struct dkim_message *, char *, int);
@@ -154,19 +150,19 @@ main(int argc, char *argv[])
 				canonheader = CANON_RELAXED;
 				optarg += 7;
 			} else
-				osmtpd_err(1, "Invalid canonicalization");
+				osmtpd_errx(1, "Invalid canonicalization");
 			if (optarg[0] == '/') {
 				if (strcmp(optarg + 1, "simple") == 0)
 					canonbody = CANON_SIMPLE;
 				else if (strcmp(optarg + 1, "relaxed") == 0)
 					canonbody = CANON_RELAXED;
 				else
-					osmtpd_err(1,
+					osmtpd_errx(1,
 					    "Invalid canonicalization");
 			} else if (optarg[0] == '\0')
 				canonbody = CANON_SIMPLE;
 			else
-				osmtpd_err(1, "Invalid canonicalization");
+				osmtpd_errx(1, "Invalid canonicalization");
 			break;
 		case 'D':
 			if ((file = fopen(optarg, "r")) == NULL)
@@ -238,7 +234,6 @@ main(int argc, char *argv[])
 		osmtpd_errx(1, "Key is not of type %s", cryptalg);
 
 	osmtpd_register_filter_dataline(dkim_dataline);
-	osmtpd_register_filter_commit(dkim_commit);
 	osmtpd_local_message(dkim_message_new, dkim_message_free);
 	osmtpd_run();
 
@@ -250,9 +245,8 @@ dkim_adddomain(char *d)
 {
 	domain = reallocarray(domain, ndomains + 1, sizeof(*domain));
 	if (domain == NULL)
-		osmtpd_err(1, "malloc");
+		osmtpd_err(1, "%s: reallocarray", __func__);
 	domain[ndomains++] = d;
-	
 }
 
 void
@@ -262,15 +256,9 @@ dkim_dataline(struct osmtpd_ctx *ctx, const char *line)
 	char *linedup;
 	size_t linelen;
 
-	if (message->err) {
-		if (line[0] == '.' && line[1] =='\0')
-			osmtpd_filter_dataline(ctx, ".");
-		return;
-	}
-
 	linelen = strlen(line);
 	if (fprintf(message->origf, "%s\n", line) < (int) linelen)
-		dkim_errx(message, "Couldn't write to tempfile");
+		osmtpd_errx(1, "Couldn't write to tempfile");
 
 	if (line[0] == '.' && line[1] =='\0') {
 		dkim_sign(ctx);
@@ -278,7 +266,7 @@ dkim_dataline(struct osmtpd_ctx *ctx, const char *line)
 		if (line[0] == '.')
 			line++;
 		if ((linedup = strdup(line)) == NULL)
-			osmtpd_err(1, "strdup");
+			osmtpd_err(1, "%s: strdup", __func__);
 		dkim_parse_header(message, linedup, 0);
 		free(linedup);
 	} else if (linelen == 0 && message->parsing_headers) {
@@ -289,21 +277,10 @@ dkim_dataline(struct osmtpd_ctx *ctx, const char *line)
 		if (line[0] == '.')
 			line++;
 		if ((linedup = strdup(line)) == NULL)
-			osmtpd_err(1, "strdup");
+			osmtpd_err(1, "%s: strdup", __func__);
 		dkim_parse_body(message, linedup);
 		free(linedup);
 	}
-}
-
-void
-dkim_commit(struct osmtpd_ctx *ctx)
-{
-	struct dkim_message *message = ctx->local_message;
-
-	if (message->err)
-		osmtpd_filter_disconnect(ctx, "Internal server error");
-	else
-		osmtpd_filter_proceed(ctx);
 }
 
 void *
@@ -312,27 +289,24 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	struct dkim_message *message;
 
 	if ((message = calloc(1, sizeof(*message))) == NULL) {
-		dkim_err(message, "Failed to create message context");
+		osmtpd_err(1, "%s: calloc", __func__);
 		return NULL;
 	}
 
 	if ((message->origf = tmpfile()) == NULL) {
-		dkim_err(message, "Failed to open tempfile");
+		osmtpd_warn(NULL, "Failed to open tempfile");
 		goto fail;
 	}
 	message->parsing_headers = 1;
 
 	message->body_whitelines = 0;
 	message->headers = calloc(1, sizeof(*(message->headers)));
-	if (message->headers == NULL) {
-		dkim_err(message, "Can't save headers");
-		goto fail;
-	}
+	if (message->headers == NULL)
+		osmtpd_err(1, "%s: calloc", __func__);
 	message->lastheader = 0;
 	message->signature.signature = NULL;
 	message->signature.size = 0;
 	message->signature.len = 0;
-	message->err = 0;
 
 	if (!dkim_signature_printf(message,
 	    "DKIM-Signature: v=%s; a=%s-%s; c=%s/%s; s=%s; ", "1",
@@ -343,14 +317,11 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	if (addheaders > 0 && !dkim_signature_printf(message, "z="))
 		goto fail;
 
-	if ((message->dctx = EVP_MD_CTX_new()) == NULL) {
-		dkim_errx(message, "Failed to create hash context");
-		goto fail;
-	}
-	if (EVP_DigestInit_ex(message->dctx, hash_md, NULL) <= 0) {
-		dkim_errx(message, "Failed to initialize hash context");
-		goto fail;
-	}
+	if ((message->dctx = EVP_MD_CTX_new()) == NULL)
+		osmtpd_errx(1, "EVP_MD_CTX_new");
+	if (EVP_DigestInit_ex(message->dctx, hash_md, NULL) <= 0)
+		osmtpd_errx(1, "EVP_DigestInit_ex");
+
 	return message;
 fail:
 	dkim_message_free(ctx, message);
@@ -398,7 +369,7 @@ dkim_headers_set(char *headers)
 
 	if ((sign_headers = reallocarray(NULL, nsign_headers + 1,
 	    sizeof(*sign_headers))) == NULL)
-		osmtpd_errx(1, NULL);
+		osmtpd_errx(1, "%s: reallocarray", __func__);
 
 	for (i = 0; i < nsign_headers; i++) {
 		sign_headers[i] = headers;
@@ -411,20 +382,6 @@ dkim_headers_set(char *headers)
 	}
 	if (!has_from)
 		osmtpd_errx(1, "From header must be included");
-}
-
-void
-dkim_err(struct dkim_message *message, char *msg)
-{
-	message->err = 1;
-	fprintf(stderr, "%s: %s\n", msg, strerror(errno));
-}
-
-void
-dkim_errx(struct dkim_message *message, char *msg)
-{
-	message->err = 1;
-	fprintf(stderr, "%s\n", msg);
 }
 
 void
@@ -503,16 +460,12 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 	if (!message->lastheader) {
 		mtmp = recallocarray(message->headers, lastheader + 1,
 		    lastheader + 2, sizeof(*mtmp));
-		if (mtmp == NULL) {
-			dkim_err(message, "Can't store header");
-			return;
-		}
+		if (mtmp == NULL)
+			osmtpd_err(1, "%s: reallocarray", __func__);
 		message->headers = mtmp;
 
-		if ((message->headers[lastheader] = strdup(line)) == NULL) {
-			dkim_err(message, "Can't store header");
-			return;
-		}
+		if ((message->headers[lastheader] = strdup(line)) == NULL)
+			osmtpd_err(1, "%s: strdup", __func__);
 		message->headers[lastheader + 1 ] = NULL;
 		message->lastheader = 1;
 	} else {
@@ -523,21 +476,19 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 		linelen++;
 		htmp = reallocarray(message->headers[lastheader], linelen,
 		    sizeof(*htmp));
-		if (htmp == NULL) {
-			dkim_err(message, "Can't store header");
-			return;
-		}
+		if (htmp == NULL)
+			osmtpd_err(1, "%s: reallocarray", __func__);
 		message->headers[lastheader] = htmp;
 		if (canonheader == CANON_SIMPLE) {
 			if (strlcat(htmp, "\r\n", linelen) >= linelen)
-				osmtpd_errx(1, "Missized header");
+				osmtpd_warnx(NULL, "Missized header");
 		} else if (canonheader == CANON_RELAXED &&
 		    (tmp = strchr(message->headers[lastheader], ':')) != NULL &&
 		    tmp[1] == '\0')
 			line++;
 
 		if (strlcat(htmp, line, linelen) >= linelen)
-			osmtpd_errx(1, "Missized header");
+			osmtpd_warnx(NULL, "Missized header");
 	}
 }
 
@@ -568,19 +519,15 @@ dkim_parse_body(struct dkim_message *message, char *line)
 	}
 
 	while (message->body_whitelines--) {
-		if (EVP_DigestUpdate(message->dctx, "\r\n", 2) == 0) {
-			dkim_errx(message, "Can't update hash context");
-			return;
-		}
+		if (EVP_DigestUpdate(message->dctx, "\r\n", 2) == 0)
+			osmtpd_errx(1, "EVP_DigestUpdate");
 	}
 	message->body_whitelines = 0;
 	message->has_body = 1;
 
 	if (EVP_DigestUpdate(message->dctx, line, linelen) == 0 ||
-	    EVP_DigestUpdate(message->dctx, "\r\n", 2) == 0) {
-		dkim_errx(message, "Can't update hash context");
-		return;
-	}
+	    EVP_DigestUpdate(message->dctx, "\r\n", 2) == 0)
+		osmtpd_errx(1, "EVP_DigestUpdate");
 }
 
 void
@@ -608,15 +555,11 @@ dkim_sign(struct osmtpd_ctx *ctx)
 		goto fail;
 
 	if (canonbody == CANON_SIMPLE && !message->has_body) {
-		if (EVP_DigestUpdate(message->dctx, "\r\n", 2) <= 0) {
-			dkim_errx(message, "Can't update hash context");
-			goto fail;
-		}
+		if (EVP_DigestUpdate(message->dctx, "\r\n", 2) <= 0)
+			osmtpd_errx(1, "EVP_DigestUpdate");
 	}
-	if (EVP_DigestFinal_ex(message->dctx, bdigest, &digestsz) == 0) {
-		dkim_errx(message, "Can't finalize hash context");
-		goto fail;
-	}
+	if (EVP_DigestFinal_ex(message->dctx, bdigest, &digestsz) == 0)
+		osmtpd_errx(1, "EVP_DigestFinal_ex");
 	EVP_EncodeBlock(digest, bdigest, digestsz);
 	if (!dkim_signature_printf(message, "bh=%s; h=", digest))
 		goto fail;
@@ -626,16 +569,11 @@ dkim_sign(struct osmtpd_ctx *ctx)
 	EVP_MD_CTX_reset(message->dctx);
 	if (!sephash) {
 		if (EVP_DigestSignInit(message->dctx, NULL, hash_md, NULL,
-		    pkey) != 1) {
-			dkim_errx(message, "Failed to initialize signature "
-			    "context");
-			goto fail;
-		}
+		    pkey) != 1)
+			osmtpd_errx(1, "EVP_DigestSignInit");
 	} else {
-		if (EVP_DigestInit_ex(message->dctx, hash_md, NULL) != 1) {
-			dkim_errx(message, "Failed to initialize hash context");
-			goto fail;
-		}
+		if (EVP_DigestInit_ex(message->dctx, hash_md, NULL) != 1)
+			osmtpd_errx(1, "EVP_DigestInit_ex");
 	}
 	for (i--; i >= 0; i--) {
 		if (!sephash) {
@@ -643,19 +581,13 @@ dkim_sign(struct osmtpd_ctx *ctx)
 			    message->headers[i],
 			    strlen(message->headers[i])) != 1 ||
 			    EVP_DigestSignUpdate(message->dctx, "\r\n",
-			    2) <= 0) {
-				dkim_errx(message, "Failed to update signature "
-				    "context");
-				goto fail;
-			}
+			    2) <= 0)
+				osmtpd_errx(1, "EVP_DigestSignUpdate");
 		} else {
 			if (EVP_DigestUpdate(message->dctx, message->headers[i],
 			    strlen(message->headers[i])) != 1 ||
-			    EVP_DigestUpdate(message->dctx, "\r\n", 2) <= 0) {
-				dkim_errx(message, "Failed to update digest "
-				    "context");
-				goto fail;
-			}
+			    EVP_DigestUpdate(message->dctx, "\r\n", 2) <= 0)
+				osmtpd_errx(1, "EVP_DigestSignUpdate");
 		}
 		if ((tsdomain = dkim_domain_select(message, message->headers[i])) != NULL)
 			sdomain = tsdomain;
@@ -674,73 +606,49 @@ dkim_sign(struct osmtpd_ctx *ctx)
 	dkim_signature_printf(message, "; d=%s; b=", sdomain);
 	if (!dkim_signature_normalize(message))
 		goto fail;
-	if ((tmp = strdup(message->signature.signature)) == NULL) {
-		dkim_err(message, "Can't create DKIM signature");
-		goto fail;
-	}
+	if ((tmp = strdup(message->signature.signature)) == NULL)
+		osmtpd_err(1, "%s: strdup", __func__);
 	dkim_parse_header(message, tmp, 1);
 	if (!sephash) {
 		if (EVP_DigestSignUpdate(message->dctx, tmp,
-		    strlen(tmp)) != 1) {
-			dkim_errx(message, "Failed to update signature "
-			    "context");
-			goto fail;
-		}
+		    strlen(tmp)) != 1)
+			osmtpd_errx(1, "EVP_DigestSignUpdate");
 	} else {
-		if (EVP_DigestUpdate(message->dctx, tmp, strlen(tmp)) != 1) {
-			dkim_errx(message, "Failed to update digest context");
-			goto fail;
-		}
+		if (EVP_DigestUpdate(message->dctx, tmp, strlen(tmp)) != 1)
+			osmtpd_errx(1, "EVP_DigestUpdate");
 	}
 	free(tmp);
 	if (!sephash) {
-		if (EVP_DigestSignFinal(message->dctx, NULL, &linelen) != 1) {
-			dkim_errx(message, "Can't finalize signature context");
-			goto fail;
-		}
+		if (EVP_DigestSignFinal(message->dctx, NULL, &linelen) != 1)
+			osmtpd_errx(1, "EVP_DigestSignFinal");
 #ifdef HAVE_ED25519
 	} else {
 		if (EVP_DigestFinal_ex(message->dctx, bdigest,
-		    &digestsz) != 1) {
-			dkim_errx(message, "Can't finalize hash context");
-			goto fail;
-		}
+		    &digestsz) != 1)
+			osmtpd_errx(1, "EVP_DigestFinal_ex");
 		EVP_MD_CTX_reset(message->dctx);
 		if (EVP_DigestSignInit(message->dctx, NULL, NULL, NULL,
-		    pkey) != 1) {
-			dkim_errx(message, "Failed to initialize signature "
-			    "context");
-			goto fail;
-		}
+		    pkey) != 1)
+			osmtpd_errx(1, "EVP_DigestSignInit");
 		if (EVP_DigestSign(message->dctx, NULL, &linelen, bdigest,
-		    digestsz) != 1) {
-			dkim_errx(message, "Failed to finalize signature");
-			goto fail;
-		}
+		    digestsz) != 1)
+			osmtpd_errx(1, "EVP_DigestSign");
 #endif
 	}
-	if ((tmp = malloc(linelen)) == NULL) {
-		dkim_err(message, "Can't allocate space for signature");
-		goto fail;
-	}
+	if ((tmp = malloc(linelen)) == NULL)
+		osmtpd_err(1, "%s: malloc", __func__);
 	if (!sephash) {
-		if (EVP_DigestSignFinal(message->dctx, tmp, &linelen) != 1) {
-			dkim_errx(message, "Failed to finalize signature");
-			goto fail;
-		}
+		if (EVP_DigestSignFinal(message->dctx, tmp, &linelen) != 1)
+			osmtpd_errx(1, "EVP_DigestSignFinal");
 #ifdef HAVE_ED25519
 	} else {
 		if (EVP_DigestSign(message->dctx, tmp, &linelen, bdigest,
-		    digestsz) != 1) {
-			dkim_errx(message, "Failed to finalize signature");
-			goto fail;
-		}
+		    digestsz) != 1)
+			osmtpd_errx(1, "EVP_DigestSign");
 #endif
 	}
-	if ((b = malloc((((linelen + 2) / 3) * 4) + 1)) == NULL) {
-		dkim_err(message, "Can't create DKIM signature");
-		goto fail;
-	}
+	if ((b = malloc((((linelen + 2) / 3) * 4) + 1)) == NULL)
+		osmtpd_err(1, "%s: malloc", __func__);
 	EVP_EncodeBlock(b, tmp, linelen);
 	free(tmp);
 	dkim_signature_printf(message, "%s\r\n", b);
@@ -858,14 +766,11 @@ dkim_signature_printheader(struct dkim_message *message, const char *header)
 	len = strlen(header);
 	if ((len + 3) * 3 < len) {
 		errno = EOVERFLOW;
-		dkim_err(message, "Can't add z-component to header");
 		return 0;
 	}
 	if ((len + 3) * 3 > size) {
-		if ((tmp = reallocarray(fmtheader, 3, len + 3)) == NULL) {
-			dkim_err(message, "Can't add z-component to header");
-			return 0;
-		}
+		if ((tmp = reallocarray(fmtheader, 3, len + 3)) == NULL)
+			osmtpd_err(1, "%s: reallocarray", __func__);
 		fmtheader = tmp;
 		size = (len + 1) * 3;
 	}
@@ -920,13 +825,8 @@ dkim_domain_select(struct dkim_message *message, char *from)
 	char *mdomain0, *mdomain;
 	size_t i;
 
-	if ((mdomain = mdomain0 = osmtpd_mheader_from_domain(from)) == NULL) {
-		if (errno != EINVAL) {
-			dkim_errx(message, "Couldn't parse from header");
-			return NULL;
-		}
+	if ((mdomain = mdomain0 = osmtpd_mheader_from_domain(from)) == NULL)
 		return NULL;
-	}
 
 	while (mdomain != NULL && mdomain[0] != '\0') {
 		for (i = 0; i < ndomains; i++) {
@@ -951,10 +851,8 @@ dkim_signature_need(struct dkim_message *message, size_t len)
 	if (sig->len + len < sig->size)
 		return 1;
 	sig->size = (((len + sig->len) / 512) + 1) * 512;
-	if ((tmp = realloc(sig->signature, sig->size)) == NULL) {
-		dkim_err(message, "No room for signature");
-		return 0;
-	}
+	if ((tmp = realloc(sig->signature, sig->size)) == NULL)
+		osmtpd_err(1, "%s: malloc", __func__);
 	sig->signature = tmp;
 	return 1;
 }
