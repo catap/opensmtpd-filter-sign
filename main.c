@@ -757,36 +757,26 @@ dkim_signature_normalize(struct dkim_message *message)
 int
 dkim_signature_printheader(struct dkim_message *message, const char *line)
 {
-	size_t i, j, len;
-	int r;
-	char *fmtheader;
+	size_t i;
 	int first;
 
-	len = strlen(line);
-	if ((fmtheader = reallocarray(NULL, 3, len + 3)) == NULL)
-		osmtpd_err(1, "malloc");
-
 	first = message->signature.signature[message->signature.len - 1] == '=';
-	for (j = i = 0; line[i] != '\0'; i++, j++) {
+	for (i = 0; line[i] != '\0'; i++) {
 		if (i == 0 && line[i] != ' ' && line[i] != '\t' && !first)
-			fmtheader[j++] = '|';
+			if (!dkim_signature_printf(message, "|"))
+				return 0;
 		if ((line[i] >= 0x21 && line[i] <= 0x3A) ||
 		    (line[i] == 0x3C) ||
 		    (line[i] >= 0x3E && line[i] <= 0x7B) ||
-		    (line[i] >= 0x7D && line[i] <= 0x7E))
-			fmtheader[j] = line[i];
-		else {
-			fmtheader[j++] = '=';
-			(void) sprintf(fmtheader + j, "%02hhX", line[i]);
-			j++;
+		    (line[i] >= 0x7D && line[i] <= 0x7E)) {
+			if (!dkim_signature_printf(message, "%c", line[i]))
+				return 0;
+		} else {
+			if (!dkim_signature_printf(message, "=%02hhX", line[i]))
+				return 0;
 		}
 	}
-	(void) sprintf(fmtheader + j, "=%02hhX=%02hhX", (unsigned char) '\r',
-	    (unsigned char) '\n');
-
-	r = dkim_signature_printf(message, "%s", fmtheader);
-	free(fmtheader);
-	return r;
+	return dkim_signature_printf(message, "=%02hhX=%02hhX", '\r', '\n');
 }
 
 int
