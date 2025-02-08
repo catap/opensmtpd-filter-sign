@@ -755,29 +755,29 @@ dkim_signature_normalize(struct dkim_message *message)
 }
 
 int
-dkim_signature_printheader(struct dkim_message *message, const char *header)
+dkim_signature_printheader(struct dkim_message *message, const char *line)
 {
 	size_t i, j, len;
 	int r;
 	char *fmtheader;
 	int first;
 
-	len = strlen(header);
+	len = strlen(line);
 	if ((fmtheader = reallocarray(NULL, 3, len + 3)) == NULL)
 		osmtpd_err(1, "malloc");
 
 	first = message->signature.signature[message->signature.len - 1] == '=';
-	for (j = i = 0; header[i] != '\0'; i++, j++) {
-		if (i == 0 && header[i] != ' ' && header[i] != '\t' && !first)
+	for (j = i = 0; line[i] != '\0'; i++, j++) {
+		if (i == 0 && line[i] != ' ' && line[i] != '\t' && !first)
 			fmtheader[j++] = '|';
-		if ((header[i] >= 0x21 && header[i] <= 0x3A) ||
-		    (header[i] == 0x3C) ||
-		    (header[i] >= 0x3E && header[i] <= 0x7B) ||
-		    (header[i] >= 0x7D && header[i] <= 0x7E))
-			fmtheader[j] = header[i];
+		if ((line[i] >= 0x21 && line[i] <= 0x3A) ||
+		    (line[i] == 0x3C) ||
+		    (line[i] >= 0x3E && line[i] <= 0x7B) ||
+		    (line[i] >= 0x7D && line[i] <= 0x7E))
+			fmtheader[j] = line[i];
 		else {
 			fmtheader[j++] = '=';
-			(void) sprintf(fmtheader + j, "%02hhX", header[i]);
+			(void) sprintf(fmtheader + j, "%02hhX", line[i]);
 			j++;
 		}
 	}
