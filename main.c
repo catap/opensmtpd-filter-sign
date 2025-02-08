@@ -758,22 +758,13 @@ int
 dkim_signature_printheader(struct dkim_message *message, const char *header)
 {
 	size_t i, j, len;
-	static char *fmtheader = NULL;
-	char *tmp;
-	static size_t size = 0;
+	int r;
+	char *fmtheader;
 	int first;
 
 	len = strlen(header);
-	if ((len + 3) * 3 < len) {
-		errno = EOVERFLOW;
-		return 0;
-	}
-	if ((len + 3) * 3 > size) {
-		if ((tmp = reallocarray(fmtheader, 3, len + 3)) == NULL)
-			osmtpd_err(1, "%s: reallocarray", __func__);
-		fmtheader = tmp;
-		size = (len + 1) * 3;
-	}
+	if ((fmtheader = reallocarray(NULL, 3, len + 3)) == NULL)
+		osmtpd_err(1, "malloc");
 
 	first = message->signature.signature[message->signature.len - 1] == '=';
 	for (j = i = 0; header[i] != '\0'; i++, j++) {
@@ -793,7 +784,9 @@ dkim_signature_printheader(struct dkim_message *message, const char *header)
 	(void) sprintf(fmtheader + j, "=%02hhX=%02hhX", (unsigned char) '\r',
 	    (unsigned char) '\n');
 
-	return dkim_signature_printf(message, "%s", fmtheader);
+	r = dkim_signature_printf(message, "%s", fmtheader);
+	free(fmtheader);
+	return r;
 }
 
 int
