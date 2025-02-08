@@ -106,12 +106,12 @@ void dkim_message_free(struct osmtpd_ctx *, void *);
 void dkim_parse_header(struct dkim_message *, char *, int);
 void dkim_parse_body(struct dkim_message *, char *);
 void dkim_sign(struct osmtpd_ctx *);
-int dkim_signature_printheader(struct dkim_message *, const char *);
-int dkim_signature_printf(struct dkim_message *, char *, ...)
+void dkim_signature_printheader(struct dkim_message *, const char *);
+void dkim_signature_printf(struct dkim_message *, char *, ...)
 	__attribute__((__format__ (printf, 2, 3)));
-int dkim_signature_normalize(struct dkim_message *);
+void dkim_signature_normalize(struct dkim_message *);
 const char *dkim_domain_select(struct dkim_message *, char *);
-int dkim_signature_need(struct dkim_message *, size_t);
+void dkim_signature_need(struct dkim_message *, size_t);
 int dkim_sign_init(struct dkim_message *);
 
 int
@@ -270,8 +270,8 @@ dkim_dataline(struct osmtpd_ctx *ctx, const char *line)
 		dkim_parse_header(message, linedup, 0);
 		free(linedup);
 	} else if (linelen == 0 && message->parsing_headers) {
-		if (addheaders > 0 && !dkim_signature_printf(message, "; "))
-			return;
+		if (addheaders > 0)
+			dkim_signature_printf(message, "; ");
 		message->parsing_headers = 0;
 	} else {
 		if (line[0] == '.')
@@ -308,14 +308,13 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	message->signature.size = 0;
 	message->signature.len = 0;
 
-	if (!dkim_signature_printf(message,
+	dkim_signature_printf(message,
 	    "DKIM-Signature: v=%s; a=%s-%s; c=%s/%s; s=%s; ", "1",
 	    cryptalg, hashalg,
 	    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
-	    canonbody == CANON_SIMPLE ? "simple" : "relaxed", selector))
-		goto fail;
-	if (addheaders > 0 && !dkim_signature_printf(message, "z="))
-		goto fail;
+	    canonbody == CANON_SIMPLE ? "simple" : "relaxed", selector);
+	if (addheaders > 0)
+		dkim_signature_printf(message, "z=");
 
 	if ((message->dctx = EVP_MD_CTX_new()) == NULL)
 		osmtpd_errx(1, "EVP_MD_CTX_new");
@@ -397,9 +396,8 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 	char *htmp;
 	char *tmp;
 
-	if (addheaders == 2 && !force &&
-	    !dkim_signature_printheader(message, line))
-		return;
+	if (addheaders == 2 && !force)
+		dkim_signature_printheader(message, line);
 
 	if ((line[0] == ' ' || line[0] == '\t') && !message->lastheader)
 		return;
@@ -419,9 +417,8 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 			return;
 	}
 
-	if (addheaders == 1 && !force &&
-	    !dkim_signature_printheader(message, line))
-		return;
+	if (addheaders == 1 && !force)
+		dkim_signature_printheader(message, line);
 
 	if (canonheader == CANON_RELAXED) {
 		if (!message->lastheader)
@@ -547,12 +544,11 @@ dkim_sign(struct osmtpd_ctx *ctx)
 
 	if (addtime || addexpire)
 		now = time(NULL);
-	if (addtime && !dkim_signature_printf(message, "t=%lld; ",
-	    (long long)now))
-		goto fail;
-	if (addexpire != 0 && !dkim_signature_printf(message, "x=%lld; ",
-	    now + addexpire < now ? INT64_MAX : now + addexpire))
-		goto fail;
+	if (addtime)
+		dkim_signature_printf(message, "t=%lld; ", (long long)now);
+	if (addexpire != 0)
+		dkim_signature_printf(message, "x=%lld; ",
+		    now + addexpire < now ? INT64_MAX : now + addexpire);
 
 	if (canonbody == CANON_SIMPLE && !message->has_body) {
 		if (EVP_DigestUpdate(message->dctx, "\r\n", 2) <= 0)
@@ -561,8 +557,7 @@ dkim_sign(struct osmtpd_ctx *ctx)
 	if (EVP_DigestFinal_ex(message->dctx, bdigest, &digestsz) == 0)
 		osmtpd_errx(1, "EVP_DigestFinal_ex");
 	EVP_EncodeBlock(digest, bdigest, digestsz);
-	if (!dkim_signature_printf(message, "bh=%s; h=", digest))
-		goto fail;
+	dkim_signature_printf(message, "bh=%s; h=", digest);
 	/* Reverse order for ease of use of RFC6367 section 5.4.2 */
 	for (i = 0; message->headers[i] != NULL; i++)
 		continue;
@@ -598,14 +593,12 @@ dkim_sign(struct osmtpd_ctx *ctx)
 			tmp[0] = tolower(tmp[0]);
 		}
 		tmp[0] = '\0';
-		if (!dkim_signature_printf(message, "%s%s",
+		dkim_signature_printf(message, "%s%s",
 		    message->headers[i + 1] == NULL  ? "" : ":",
-		    message->headers[i]))
-			goto fail;
+		    message->headers[i]);
 	}
 	dkim_signature_printf(message, "; d=%s; b=", sdomain);
-	if (!dkim_signature_normalize(message))
-		goto fail;
+	dkim_signature_normalize(message);
 	if ((tmp = strdup(message->signature.signature)) == NULL)
 		osmtpd_err(1, "%s: strdup", __func__);
 	dkim_parse_header(message, tmp, 1);
@@ -669,11 +662,9 @@ dkim_sign(struct osmtpd_ctx *ctx)
 	}
 	free(tmp);
 	return;
-fail:
-	osmtpd_filter_dataline(ctx, ".");
 }
 
-int
+void
 dkim_signature_normalize(struct dkim_message *message)
 {
 	size_t i;
@@ -709,9 +700,8 @@ dkim_signature_normalize(struct dkim_message *message)
 			    skip++)
 				continue;
 			skip -= checkpoint + 1;
-			if (!dkim_signature_need(message,
-			    skip > 3 ? 0 : 3 - skip + 1))
-				return 0;
+			dkim_signature_need(message,
+			    skip > 3 ? 0 : 3 - skip + 1);
 			sig = message->signature.signature;
 
 			memmove(sig + checkpoint + 3,
@@ -751,10 +741,9 @@ dkim_signature_normalize(struct dkim_message *message)
 				tag = sig[i];
 		}
 	}
-	return 1;
 }
 
-int
+void
 dkim_signature_printheader(struct dkim_message *message, const char *line)
 {
 	size_t i;
@@ -763,23 +752,19 @@ dkim_signature_printheader(struct dkim_message *message, const char *line)
 	first = message->signature.signature[message->signature.len - 1] == '=';
 	for (i = 0; line[i] != '\0'; i++) {
 		if (i == 0 && line[i] != ' ' && line[i] != '\t' && !first)
-			if (!dkim_signature_printf(message, "|"))
-				return 0;
+			dkim_signature_printf(message, "|");
 		if ((line[i] >= 0x21 && line[i] <= 0x3A) ||
 		    (line[i] == 0x3C) ||
 		    (line[i] >= 0x3E && line[i] <= 0x7B) ||
 		    (line[i] >= 0x7D && line[i] <= 0x7E)) {
-			if (!dkim_signature_printf(message, "%c", line[i]))
-				return 0;
-		} else {
-			if (!dkim_signature_printf(message, "=%02hhX", line[i]))
-				return 0;
-		}
+			dkim_signature_printf(message, "%c", line[i]);
+		} else
+			dkim_signature_printf(message, "=%02hhX", line[i]);
 	}
-	return dkim_signature_printf(message, "=%02hhX=%02hhX", '\r', '\n');
+	dkim_signature_printf(message, "=%02hhX=%02hhX", '\r', '\n');
 }
 
-int
+void
 dkim_signature_printf(struct dkim_message *message, char *fmt, ...)
 {
 	struct dkim_signature *sig = &(message->signature);
@@ -790,8 +775,7 @@ dkim_signature_printf(struct dkim_message *message, char *fmt, ...)
 	if ((len = vsnprintf(sig->signature + sig->len, sig->size - sig->len,
 	    fmt, ap)) >= sig->size - sig->len) {
 		va_end(ap);
-		if (!dkim_signature_need(message, len + 1))
-			return 0;
+		dkim_signature_need(message, len + 1);
 		va_start(ap, fmt);
 		if ((len = vsnprintf(sig->signature + sig->len,
 		    sig->size - sig->len, fmt, ap)) >= sig->size - sig->len)
@@ -799,7 +783,6 @@ dkim_signature_printf(struct dkim_message *message, char *fmt, ...)
 	}
 	sig->len += len;
 	va_end(ap);
-	return 1;
 }
 
 const char *
@@ -825,19 +808,18 @@ dkim_domain_select(struct dkim_message *message, char *from)
 	return NULL;
 }
 
-int
+void
 dkim_signature_need(struct dkim_message *message, size_t len)
 {
 	struct dkim_signature *sig = &(message->signature);
 	char *tmp;
 
 	if (sig->len + len < sig->size)
-		return 1;
+		return;
 	sig->size = (((len + sig->len) / 512) + 1) * 512;
 	if ((tmp = realloc(sig->signature, sig->size)) == NULL)
 		osmtpd_err(1, "%s: malloc", __func__);
 	sig->signature = tmp;
-	return 1;
 }
 
 __dead void
