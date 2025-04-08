@@ -245,7 +245,7 @@ dkim_adddomain(char *d)
 {
 	domain = reallocarray(domain, ndomains + 1, sizeof(*domain));
 	if (domain == NULL)
-		osmtpd_err(1, "%s: reallocarray", __func__);
+		osmtpd_err(1, "reallocarray");
 	domain[ndomains++] = d;
 }
 
@@ -266,7 +266,7 @@ dkim_dataline(struct osmtpd_ctx *ctx, const char *line)
 		if (line[0] == '.')
 			line++;
 		if ((linedup = strdup(line)) == NULL)
-			osmtpd_err(1, "%s: strdup", __func__);
+			osmtpd_err(1, "strdup");
 		dkim_parse_header(message, linedup, 0);
 		free(linedup);
 	} else if (linelen == 0 && message->parsing_headers) {
@@ -277,7 +277,7 @@ dkim_dataline(struct osmtpd_ctx *ctx, const char *line)
 		if (line[0] == '.')
 			line++;
 		if ((linedup = strdup(line)) == NULL)
-			osmtpd_err(1, "%s: strdup", __func__);
+			osmtpd_err(1, "strdup");
 		dkim_parse_body(message, linedup);
 		free(linedup);
 	}
@@ -289,7 +289,7 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	struct dkim_message *message;
 
 	if ((message = calloc(1, sizeof(*message))) == NULL) {
-		osmtpd_err(1, "%s: calloc", __func__);
+		osmtpd_err(1, "calloc");
 		return NULL;
 	}
 
@@ -302,7 +302,7 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	message->body_whitelines = 0;
 	message->headers = calloc(1, sizeof(*(message->headers)));
 	if (message->headers == NULL)
-		osmtpd_err(1, "%s: calloc", __func__);
+		osmtpd_err(1, "calloc");
 	message->lastheader = 0;
 	message->signature.signature = NULL;
 	message->signature.size = 0;
@@ -368,7 +368,7 @@ dkim_headers_set(char *headers)
 
 	if ((sign_headers = reallocarray(NULL, nsign_headers + 1,
 	    sizeof(*sign_headers))) == NULL)
-		osmtpd_errx(1, "%s: reallocarray", __func__);
+		osmtpd_errx(1, "reallocarray");
 
 	for (i = 0; i < nsign_headers; i++) {
 		sign_headers[i] = headers;
@@ -458,11 +458,11 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 		mtmp = recallocarray(message->headers, lastheader + 1,
 		    lastheader + 2, sizeof(*mtmp));
 		if (mtmp == NULL)
-			osmtpd_err(1, "%s: reallocarray", __func__);
+			osmtpd_err(1, "reallocarray");
 		message->headers = mtmp;
 
 		if ((message->headers[lastheader] = strdup(line)) == NULL)
-			osmtpd_err(1, "%s: strdup", __func__);
+			osmtpd_err(1, "strdup");
 		message->headers[lastheader + 1 ] = NULL;
 		message->lastheader = 1;
 	} else {
@@ -474,7 +474,7 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 		htmp = reallocarray(message->headers[lastheader], linelen,
 		    sizeof(*htmp));
 		if (htmp == NULL)
-			osmtpd_err(1, "%s: reallocarray", __func__);
+			osmtpd_err(1, "reallocarray");
 		message->headers[lastheader] = htmp;
 		if (canonheader == CANON_SIMPLE) {
 			if (strlcat(htmp, "\r\n", linelen) >= linelen)
@@ -600,7 +600,7 @@ dkim_sign(struct osmtpd_ctx *ctx)
 	dkim_signature_printf(message, "; d=%s; b=", sdomain);
 	dkim_signature_normalize(message);
 	if ((tmp = strdup(message->signature.signature)) == NULL)
-		osmtpd_err(1, "%s: strdup", __func__);
+		osmtpd_err(1, "strdup");
 	dkim_parse_header(message, tmp, 1);
 	if (!sephash) {
 		if (EVP_DigestSignUpdate(message->dctx, tmp,
@@ -629,7 +629,7 @@ dkim_sign(struct osmtpd_ctx *ctx)
 #endif
 	}
 	if ((tmp = malloc(linelen)) == NULL)
-		osmtpd_err(1, "%s: malloc", __func__);
+		osmtpd_err(1, "malloc");
 	if (!sephash) {
 		if (EVP_DigestSignFinal(message->dctx, tmp, &linelen) != 1)
 			osmtpd_errx(1, "EVP_DigestSignFinal");
@@ -641,7 +641,7 @@ dkim_sign(struct osmtpd_ctx *ctx)
 #endif
 	}
 	if ((b = malloc((((linelen + 2) / 3) * 4) + 1)) == NULL)
-		osmtpd_err(1, "%s: malloc", __func__);
+		osmtpd_err(1, "malloc");
 	EVP_EncodeBlock(b, tmp, linelen);
 	free(tmp);
 	dkim_signature_printf(message, "%s\r\n", b);
@@ -818,7 +818,7 @@ dkim_signature_need(struct dkim_message *message, size_t len)
 		return;
 	sig->size = (((len + sig->len) / 512) + 1) * 512;
 	if ((tmp = realloc(sig->signature, sig->size)) == NULL)
-		osmtpd_err(1, "%s: malloc", __func__);
+		osmtpd_err(1, "malloc");
 	sig->signature = tmp;
 }
 
