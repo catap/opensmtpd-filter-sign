@@ -100,7 +100,7 @@ static int sephash = 0;
 void usage(void);
 void dkim_adddomain(char *);
 void dkim_headers_set(char *);
-void dkim_dataline(struct osmtpd_ctx *, const char *);
+int dkim_dataline(struct osmtpd_ctx *, const char *);
 void *dkim_message_new(struct osmtpd_ctx *);
 void dkim_message_free(struct osmtpd_ctx *, void *);
 void dkim_parse_header(struct dkim_message *, char *, int);
@@ -249,7 +249,7 @@ dkim_adddomain(char *d)
 	domain[ndomains++] = d;
 }
 
-void
+int
 dkim_dataline(struct osmtpd_ctx *ctx, const char *line)
 {
 	struct dkim_message *message = ctx->local_message;
@@ -257,8 +257,10 @@ dkim_dataline(struct osmtpd_ctx *ctx, const char *line)
 	size_t linelen;
 
 	linelen = strlen(line);
-	if (fprintf(message->origf, "%s\n", line) < (int) linelen)
-		osmtpd_errx(1, "Couldn't write to tempfile");
+	if (fprintf(message->origf, "%s\n", line) < (int) linelen) {
+		osmtpd_warnx(NULL, "Couldn't write to tempfile");
+		return -1;
+	}
 
 	if (line[0] == '.' && line[1] =='\0') {
 		dkim_sign(ctx);
@@ -281,6 +283,8 @@ dkim_dataline(struct osmtpd_ctx *ctx, const char *line)
 		dkim_parse_body(message, linedup);
 		free(linedup);
 	}
+
+	return 0;
 }
 
 void *
