@@ -21,6 +21,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -258,7 +259,7 @@ dkim_dataline(struct osmtpd_ctx *ctx, const char *line)
 
 	linelen = strlen(line);
 	if (fprintf(message->origf, "%s\n", line) < (int) linelen) {
-		osmtpd_warnx(NULL, "Couldn't write to tempfile");
+		osmtpd_warnx(ctx, "Couldn't write to tempfile");
 		return -1;
 	}
 
@@ -293,20 +294,22 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	struct dkim_message *message;
 
 	if ((message = calloc(1, sizeof(*message))) == NULL) {
-		osmtpd_err(1, "calloc");
+		osmtpd_warn(ctx, "calloc");
 		return NULL;
 	}
 
 	if ((message->origf = tmpfile()) == NULL) {
-		osmtpd_warn(NULL, "Failed to open tempfile");
+		osmtpd_warn(ctx, "Failed to open tempfile");
 		goto fail;
 	}
 	message->parsing_headers = 1;
 
 	message->body_whitelines = 0;
 	message->headers = calloc(1, sizeof(*(message->headers)));
-	if (message->headers == NULL)
-		osmtpd_err(1, "calloc");
+	if (message->headers == NULL) {
+		osmtpd_warn(ctx, "calloc");
+		goto fail;
+	}
 	message->lastheader = 0;
 	message->signature.signature = NULL;
 	message->signature.size = 0;
@@ -320,10 +323,14 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	if (addheaders > 0)
 		dkim_signature_printf(message, "z=");
 
-	if ((message->dctx = EVP_MD_CTX_new()) == NULL)
-		osmtpd_errx(1, "EVP_MD_CTX_new");
-	if (EVP_DigestInit_ex(message->dctx, hash_md, NULL) <= 0)
-		osmtpd_errx(1, "EVP_DigestInit_ex");
+	if ((message->dctx = EVP_MD_CTX_new()) == NULL) {
+		osmtpd_warnx(ctx, "EVP_MD_CTX_new");
+		goto fail;
+	}
+	if (EVP_DigestInit_ex(message->dctx, hash_md, NULL) <= 0) {
+		osmtpd_warnx(ctx, "EVP_DigestInit_ex");
+		goto fail;
+	}
 
 	return message;
 fail:
@@ -481,15 +488,13 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 			osmtpd_err(1, "reallocarray");
 		message->headers[lastheader] = htmp;
 		if (canonheader == CANON_SIMPLE) {
-			if (strlcat(htmp, "\r\n", linelen) >= linelen)
-				osmtpd_warnx(NULL, "Missized header");
+			(void)strlcat(htmp, "\r\n", linelen);
 		} else if (canonheader == CANON_RELAXED &&
 		    (tmp = strchr(message->headers[lastheader], ':')) != NULL &&
 		    tmp[1] == '\0')
 			line++;
 
-		if (strlcat(htmp, line, linelen) >= linelen)
-			osmtpd_warnx(NULL, "Missized header");
+		(void)strlcat(htmp, line, linelen);
 	}
 }
 
@@ -552,7 +557,7 @@ dkim_sign(struct osmtpd_ctx *ctx)
 		dkim_signature_printf(message, "t=%lld; ", (long long)now);
 	if (addexpire != 0)
 		dkim_signature_printf(message, "x=%lld; ",
-		    now + addexpire < now ? INT64_MAX : now + addexpire);
+		    now + addexpire < now ? LLONG_MAX : now + addexpire);
 
 	if (canonbody == CANON_SIMPLE && !message->has_body) {
 		if (EVP_DigestUpdate(message->dctx, "\r\n", 2) <= 0)
