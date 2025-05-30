@@ -133,13 +133,11 @@ main(int argc, char *argv[])
 				hashalg = optarg + 4;
 				keyid = EVP_PKEY_RSA;
 				sephash = 0;
-#ifdef HAVE_ED25519
 			} else if (strncmp(optarg, "ed25519-", 8) == 0) {
 				hashalg = optarg + 8;
 				cryptalg = "ed25519";
 				keyid = EVP_PKEY_ED25519;
 				sephash = 1;
-#endif
 			} else
 				osmtpd_errx(1, "invalid algorithm");
 			break;
@@ -623,7 +621,6 @@ dkim_sign(struct osmtpd_ctx *ctx)
 	if (!sephash) {
 		if (EVP_DigestSignFinal(message->dctx, NULL, &linelen) != 1)
 			osmtpd_errx(1, "EVP_DigestSignFinal");
-#ifdef HAVE_ED25519
 	} else {
 		if (EVP_DigestFinal_ex(message->dctx, bdigest,
 		    &digestsz) != 1)
@@ -635,19 +632,16 @@ dkim_sign(struct osmtpd_ctx *ctx)
 		if (EVP_DigestSign(message->dctx, NULL, &linelen, bdigest,
 		    digestsz) != 1)
 			osmtpd_errx(1, "EVP_DigestSign");
-#endif
 	}
 	if ((tmp = malloc(linelen)) == NULL)
 		osmtpd_err(1, "malloc");
 	if (!sephash) {
 		if (EVP_DigestSignFinal(message->dctx, tmp, &linelen) != 1)
 			osmtpd_errx(1, "EVP_DigestSignFinal");
-#ifdef HAVE_ED25519
 	} else {
 		if (EVP_DigestSign(message->dctx, tmp, &linelen, bdigest,
 		    digestsz) != 1)
 			osmtpd_errx(1, "EVP_DigestSign");
-#endif
 	}
 	if ((b = malloc((((linelen + 2) / 3) * 4) + 1)) == NULL)
 		osmtpd_err(1, "malloc");
